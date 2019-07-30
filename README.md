@@ -79,3 +79,38 @@ rolebinding.rbac.authorization.k8s.io/kubernetes-dashboard-minimal created
 deployment.apps/kubernetes-dashboard created
 service/kubernetes-dashboard created
 ```
+Si ahora hacemos de nuevo `kubectl -n kube-system get pods -o wide` veremos en qué máquina se ha instalado el dashboard. Podemos acceder a él con la siguiente URL: `https://kworker1.example.com:32323`. Ahora necesitamos crear una `service account` para acceder vía **token**. Para ello ejecutamos ...
+```
+$ kubectl create -f sa_cluster_admin.yaml
+serviceaccount/dashboard-admin created
+clusterrolebinding.rbac.authorization.k8s.io/cluster-admin-rolebinding created
+```
+Vamos a obtener el token creado. Para ello ...
+```
+$ # Obtenemos el ID secret del service account
+$ kubectl describe sa dashboard-admin -n kube-system
+Name:                dashboard-admin
+Namespace:           kube-system
+Labels:              <none>
+Annotations:         <none>
+Image pull secrets:  <none>
+Mountable secrets:   dashboard-admin-token-xcbdj
+Tokens:              dashboard-admin-token-xcbdj
+Events:              <none>
+$ # Obtenemos los detalles del secret
+$ kubectl describe secret dashboard-admin-token-xcbdj -n kube-system
+Name:         dashboard-admin-token-xcbdj
+Namespace:    kube-system
+Labels:       <none>
+Annotations:  kubernetes.io/service-account.name: dashboard-admin
+              kubernetes.io/service-account.uid: 72edfd43-949a-40c9-bcde-80c080ae8a85
+
+Type:  kubernetes.io/service-account-token
+
+Data
+====
+token:      eyJhbGci..._QXMvmjq3j7r-ovAQ
+ca.crt:     1025 bytes
+namespace:  11 bytes
+```
+Con el `token` obtenido, lo pegamos en la UI del Dashboard y ya tenemos acceso.

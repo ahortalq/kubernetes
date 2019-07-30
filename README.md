@@ -114,3 +114,50 @@ ca.crt:     1025 bytes
 namespace:  11 bytes
 ```
 Con el `token` obtenido, lo pegamos en la UI del Dashboard y ya tenemos acceso.
+
+## Despliegue de un contenedor Docker en el cluster
+Para desplegar un simple contenedor en el cluster, podemos hacer:
+```
+$ kubectl run myshell -it --image busybox -- sh
+```
+Para eliminaro:
+```
+$ kubectl delete deploy myshell
+```
+
+Arranquemos ahora un contenedor `nginx`
+```
+$ kubectl run nginx --image nginx
+```
+Ahora vamos a acceder al servicio nginx sin necesidad de crear un `service`. Esto lo hacemos con un `port-forward`.
+```
+$ kubectl port-forward nginx-7bb7cd8db5-ktpch 6789:80
+```
+Con esto podremos acceder a Nginx con http://localhost:6789. Para ver los **logs** del contenedor podemos ejecutar:
+```
+$ kubectl logs nginx-7bb7cd8db5-ktpch
+```
+Para aumentar el número de **réplicas**, es decir, el número de contenedores en ejecución, ejecutamos uno de los siguientes comandos:
+```
+$ kubectl run nginx --image nginx --replicas 2
+$ kubectl scale deploy nginx --replicas 2
+```
+Vamos a crear un **servicio** (en lugar de hacer un port-forward). Para ello:
+```
+$ kubectl expose deployment nginx --type NodePort --port 80
+```
+Ahora vamos a generar un fichero yaml con la descripción de nginx, el puerto, el servicio, etc. Para ello:
+```
+$ kubectl get deploy nginx -o yaml > /tmp/nginx.yaml
+$ kubectl get svc nginx -o yaml > /tmp/svc.yaml
+```
+Luego podemos aplicar esos recursos definidos en el yaml de la siguiente forma:
+```
+$ kubectl create -f /tmp/nginx.yaml
+$ kubectl create -f /tmp/svc.yaml
+```
+Y para borrar recursos ...
+```
+$ kubectl delete -f /tmp/nginx.yaml
+$ kubectl delete -f /tmp/svc.yaml
+```

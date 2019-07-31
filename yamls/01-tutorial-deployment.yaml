@@ -1,0 +1,17 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: tutorial-deploy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      run: tutorial
+  template:
+    metadata:
+      labels:
+        run: tutorial
+    spec:
+      containers:
+      - image: lyhsoft/tutorial:112
+        name: tutorial

@@ -1,0 +1,19 @@
+apiVersion: extensions/v1beta1
+kind: ReplicaSet
+metadata:
+  name: nginx-replicaset # Nombre del ReplicaSet
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      run: nginx # Este ReplicaSet manejará todos los pods que
+                 # cumplan este criterio
+  template:
+    metadata:
+      labels:
+        run: nginx # Esto debe coincidir con el matchLabels
+                   # definido en el selector
+    spec:
+      containers:
+      - image: nginx
+        name: nginx

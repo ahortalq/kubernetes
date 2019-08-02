@@ -8,6 +8,33 @@ vagrant up
 ```
 Esto creará tres máquinas viruales con un cluster K8s montado.
 
+### Crear un usuario administrador
+Crear el fichero `00-admin-user.yaml` con el siguiente contenido:
+```
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admin-user
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-user-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: admin-user
+  namespace: kube-system
+```
+Para obtener el `token` ejecutar:
+```
+$ kubectl -n kube-system describe secret $(kubectl -n kube-system get secret | grep admin-user | awk '{print $1}')
+```
+
 ### Configurar el acceso vía kubectl
 #### Crear nuevas entradas en /etc/hosts
 ```

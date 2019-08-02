@@ -453,3 +453,364 @@ spec:
           restartPolicy: Never
 ```
 En este caso, cada minuto se creará un nuevo job que será el encargado de hacer el trabajo. Hay algunas propiedades y parámetros adicionales que no vamos a ver.
+
+## Init containers
+Se utilizan como contenedores auxiliares. Por ejemplo, un pod tendrá un `init container` para descargar el código fuente de Git, que quedará en un volumen compartido con el container principal que será el encargado de lanzar la aplicación con el código fuente descargado por el `init container`. Y hasta que la ejecución del `init container` no finaliza, no se iniciará el container principal.
+
+Puede haber varios `init container` que se ejecutarán de forma secuencial. Creamos el fichero `03-init-container.yaml` con el siguiente contenido, lo que va a hacer será preparar el index.html en un volumen compartido para el pod principal.
+```
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    run: nginx
+  name: nginx-deploy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: nginx
+  template:
+    metadata:
+      labels:
+        run: nginx
+    spec:
+      volumes:
+      - name: shared-volume
+        emptyDir: {}
+      initContainers:
+      - name: busybox
+        image: busybox
+        volumeMounts:
+        - name: shared-volume
+          mountPath: /nginx-data
+        command: ["/bin/sh"]
+        args: ["-c", "echo '<h1>Hello Kubernetes</h1>' > /nginx-data/index.html"]
+      containers:
+      - image: nginx
+        name: nginx
+        volumeMounts:
+        - name: shared-volume
+          mountPath: /usr/share/nginx/html
+```
+Recordemos que para las pruebas podemos hacer:
+
+1. `kubectl port-forward pod/nginx-deploy-6c6fd785f4-j2n2l 6789:80`
+2. `kubectl expose deploy nginx-deployment --type NodePort --target-port 80`
+
+## Secrets
+Creamos el fichero `05-secrets.yaml` con el siguiente contenido:
+```
+apiVersion: v1
+kind: Secret
+metadata:
+  name: secret-demo
+type: Opaque
+data:
+  username: a3ViZXVzZXI=
+  password: a3ViZXBhc3N3b3Jk
+```
+El username y password lo obtenemos así:
+```
+$ echo -n 'kubeuser' | base64
+a3ViZXVzZXI=
+```
+```
+echo -n 'kubepassword' | base64
+a3ViZXBhc3N3b3Jk
+```
+Y creamos el recurso de tipo `Secret`. Veamos ahora cómo utilizar el `secret`. Tendremos dos formas:
+1. Usar el `secret` como variable de entorno. El `secret` será montado como una variable de entorno.
+2. Montar el `secret` como un volumen. Los `secrets` serán montados como ficheros individuales.
+
+### Usar el `secret` como variable de entorno
+Crear el fichero `05-pod-secret-env.yaml` con el siguiente contenido:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: busybox
+spec:
+  containers:
+  - image: busybox
+    name: busybox
+    command: ["/bin/sh"]
+    args: ["-c", "sleep 600"]
+    env:
+    - name: myusername
+      valueFrom:
+        secretKeyRef:
+          name: secret-demo
+          key: username
+```
+Podemos acceder al pod y ver las variables de entorno de la siguiente forma:
+```
+$ kubectl exec -it busybox -- sh
+```
+
+### Montar el `secret` como un volumen
+Creamos el fichero `05-pod-secret-volume.yaml` con el siguiente contenido:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: busybox
+spec:
+  volumes:
+  - name: secret-volume
+    secret:
+      secretName: secret-demo
+  containers:
+  - image: busybox
+    name: busybox
+    command: ["/bin/sh"]
+    args: ["-c", "sleep 600"]
+    volumeMounts:
+    - name: secret-volume
+      mountPath: /mydata
+```
+Accedemos al pod y podemos ejecutar:
+```
+# cd /mydata/
+/mydata # ls -ltr
+total 0
+lrwxrwxrwx    1 root     root            15 Aug  1 14:03 username -> ..data/username
+lrwxrwxrwx    1 root     root            15 Aug  1 14:03 password -> ..data/password
+/mydata # cat username 
+kubeuser
+/mydata # cat password 
+kubepassword
+```
+Se creará el volumen y en él habrá un fichero con el contenido de cada una de las variables que hemos definido en el `secret`.
+
+## ConfigMaps
+Se trata de externalizar la configuración de las imágenes.
+
+Crear el fichero de nombre `06-configmap-1.yaml` con el siguiente contenido:
+```
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-configmap
+data:
+  channel.name: "justmeandopensource"
+  channel.owner: "Venkat Nagappan"
+```
+
+### Montar el ConfigMap como variables de entorno
+Para usar esta configuración en un pod crear el fichero de nombre `06-pod-configmap-env.yaml` con el siguiente contenido:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: busybox
+spec:
+  containers:
+  - image: busybox
+    name: busybox
+    command: ["/bin/sh"]
+    args: ["-c", "sleep 600"]
+    env:
+    - name: CHANNELNAME
+      valueFrom:
+        configMapKeyRef:
+          name: demo-configmap
+          key: channel.name
+    - name: CHANNELOWNER
+      valueFrom:
+        configMapKeyRef:
+          name: demo-configmap
+          key: channel.owner
+```
+En este caso estamos presentando la configuración como variables de entorno.
+
+### Montar el ConfigMap como volumen
+Otra posibilidad es presentar la configuración en un volumen. Para ello crear el fichero de nombre `06-pod-configmap-volume.yaml` con el siguiente contenido:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: busybox
+spec:
+  volumes:
+  - name: demo
+    configMap:
+      name: demo-configmap
+  containers:
+  - image: busybox
+    name: busybox
+    command: ["/bin/sh"]
+    args: ["-c", "sleep 600"]
+    volumeMounts:
+    - name: demo
+      mountPath: /mydata
+```
+Los datos estarán disponibles en el directorio `/mydata`.
+
+## Ejecución de Rolling Updates
+Haremos un ejemplo con nginx con 4 réplicas y veremos cómo podemos actualizarlo. Creamos el fichero `08-nginx-rolling-update.yaml` con el siguiente contenido:
+```
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    run: nginx
+  name: nginx-deploy
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      run: nginx
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  minReadySeconds: 5
+  revisionHistoryLimit: 10
+  template:
+    metadata:
+      labels:
+        run: nginx
+    spec:
+      containers:
+      - image: nginx:1.14
+        name: nginx
+```
+Las líneas más importantes de este fichero son:
+```
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  minReadySeconds: 5
+  revisionHistoryLimit: 10
+```
+* **Strategy**. Puede ser 'RollingUpdate' o 'Recreate'. **RollingUpdate es básicamente para no tener corte de servicio**. Los pods se van actualizando poco a poco.
+* **maxSurge**. Indica cuántos pods extra podrían crearse durante el RollingUpdate. En este caso tenemos 0 con lo que como mucho, habrá 4 pods simultáneos en ejecución, los 4 que indicamos en el ReplicaSet. También podemos indicar porcentajes.
+* **maxUnavailable**. El máximo número de pods que puede haber sin servicio. También podemos indicar porcentajes.
+* **minReadySeconds**. Una vez que el ReplicaSet crea un pod, el tiempo que debe esperar hasta crear otro pod. Esto no es ideal, lo bueno sería tener un Readiness Check y un Readiness Probe.
+* **revisionHistoryLimit**. El número de versiones previas que guarda K8s.
+
+Para actualizar el deployment, modificamos el yaml y cambiamos la imagen del contenedor. Cambiamos `- image: nginx:1.14` por `- image: nginx:1.14.2`. Y hacemos un `apply`.
+
+Ahora podemos ejecutar:
+```
+$ kubectl rollout status deployment nginx-deploy
+deployment "nginx-deploy" successfully rolled out
+$ kubectl rollout history deployment nginx-deploy
+deployment.extensions/nginx-deploy 
+REVISION  CHANGE-CAUSE
+2         <none>
+3         <none>
+```
+
+Ahora veamos cómo actualizar la imagen desde línea de comando. Se trataría de ejecutar el siguiente comando:
+```
+kubectl set image deployment nginx-deploy nginx=nginx:1.15
+```
+Con esto actualizaremos la imagen a la nueva versión de modo progresivo.
+
+### Detener el despliegue
+Es posible pausar y reanudar el despliegue. Para ello, una vez iniciado un despliegue podemos ejecutar:
+```
+$ kubectl rollout pause deployment nginx-deploy
+```
+Si ahora consultamos el estado del rollout veremos:
+```
+$ kubectl rollout status deployment nginx-deploy
+Waiting for deployment "nginx-deploy" rollout to finish: 1 out of 4 new replicas have been updated...
+```
+
+### Reanudar el despliegue
+```
+$ kubectl rollout resume deployment nginx-deploy
+deployment.extensions/nginx-deploy resumed
+$ kubectl rollout status deployment nginx-deploy
+Waiting for deployment "nginx-deploy" rollout to finish: 2 out of 4 new replicas have been updated...
+Waiting for deployment "nginx-deploy" rollout to finish: 3 out of 4 new replicas have been updated...
+Waiting for deployment "nginx-deploy" rollout to finish: 3 of 4 updated replicas are available...
+Waiting for deployment "nginx-deploy" rollout to finish: 3 of 4 updated replicas are available...
+deployment "nginx-deploy" successfully rolled out
+```
+
+## Persistent Volumes & Persistent Volumes Claims
+1. El primer paso es crear un `pv`.
+2. El segundo, crear un `pvc`.
+3. El tercero, crear un pod que usa el `pvc`.
+
+**Una vez que el `pvc` se asocia a un `pv`, nadie más podrá utilizar el `pv`.**
+
+Los `pv` pueden ser estáticos (un determinado tamaño, fijos) o pueden ser dinámicos, es lo que se denominan `Storage Class`. Ejemplo, EBS de AWS (elastic block store).
+
+Ciclo de vida de un `pv`. Se denomina `ReclaimPolicy` y puede ser:
+1. `Retain`. Una vez que un deployment que hace uso de un `pv` es borrado, los datos seguirán en el `pv`, no se borrarán. Es la que viene por defecto.
+2. `Recycle`. Deprecada y para `pv` dinámicos.
+3. `Delete`. Cuando se borra el deployment que hace uso del `pv` también se borrarán los datos asociados.
+
+Modos de acceso o `Access Mode`:
+1. `RWO`: Sólo un nodo será capaz de escribir. Todos podrán leer.
+2. `RWM`: Todos los nodos serán capaces de leer y escribir.
+3. `RO`: Sólo permiso de lectura.
+
+Vamos a hacer un ejemplo con el tipo de **Persistent Volume = HostPath** (Single node testing only - local storage is not supported in any way and WILL NOT WORK in a multi-node cluster).
+* Creamos el pv
+* Creamos el pvc
+* Creamos el deployment que hará uso del pvc
+
+Creamos el fichero de nombre `04-pv-hostpath.yaml` con el siguiente contenido:
+```
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-hostpath
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:             # Aquí indico el tipo de pv que voy a crear
+    path: "/kube"
+```
+Antes de lanzarlo, entramos en `kworker1` con root y creamos el directorio `/kube` con permisos 777. Luego lanzamos el `pv`, estará creado pero no estará asociado a ningún nodo todavía.
+```
+$ kubectl get pv
+NAME          CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS      CLAIM   STORAGECLASS   REASON   AGE
+pv-hostpath   1Gi        RWO            Retain           Available           manual                  86s
+```
+Ahora vamos a crear el `pvc`. Para ello creamos el fichero de nombre `04-pvc-hostpath.yaml` con el siguiente contenido:
+```
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-hostpath
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi
+```
+Lo único que nos queda es lanzar un pod que haga uso de este `pvc`. Creamos un fichero de nombre `04-busybox-pv-hostpath.yaml` con el siguiente contenido:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: busybox
+spec:
+  volumes:
+  - name: host-volume
+    persistentVolumeClaim:
+      claimName: pvc-hostpath
+  containers:
+  - image: busybox
+    name: busybox
+    command: ["/bin/sh"]
+    args: ["-c", "sleep 600"]
+    volumeMounts:
+    - name: host-volume
+      mountPath: /mydata
+```

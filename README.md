@@ -845,3 +845,136 @@ spec:
 # Ingress controller
 En AWS, GCP o Azure, cuando creas un `service` del tipo Load Balancer, el provider automáticamente crea un punto de acceso a tus servicios. Pero en `bare metal` tenemos que preocuparnos del `Load Balancing`. Aquí es donde entra el juego el `ingress`.
 
+Necesitamos por un lado el `ingress controller` y por otro lado el `ingress resource`. El primero podemos desplegarlo tanto como DaemonSet como Deployment. En el segundo crearemos un conjunto de reglas para direccionar el tráfico. Por ejemplo, cuando la petición venga de esta dirección, enrútala a este servicio. Cuando se configuran esas reglas, cada `ingress controller` tomará nota de esas reglas y sabrá qué hacer.
+
+Necesitamos también un balanceador en el que registraremos todos los `workers nodes`. En este caso usaremos **HA proxy**. Configuraremos un **HA proxy** y un DNS para que todas las peticiones que hagamos vayan a este balanceador de carga que luego distribuirá las peticiones a los distitos worker nodes que tengamos. Y finalmente, el `ingress controller` sabrá cómo enrutar el tráfico (es decir, a qué servicio) dependiendo de dónde venga la petición.
+
+## Qué necesitamos para desplegar un Ingress Controller?
+Necesitamos los siguientes recursos K8s:
+
+* Namespace
+* Service Account
+* Cluster Role
+* Cluster Role Binding
+* Config Map
+* Secret
+* DaemonSet
+
+Y hay varios `ingress controller` que podemos utilizar como:
+
+* Nginx
+* Nginx +
+* Traefik
+
+En este ejemplo usaremos Nginx.
+
+## Creación del HA Proxy
+Primero instalamos HA Proxy
+```
+$ sudo apt install haproxy
+```
+Luego lo configuramos modificando el fichero `/etc/haproxy/haproxy.cfg` e incluyendo el siguiente contenido (dejamos el *global settings* y el *default*):
+```
+frontend http_front
+  bind *:80
+  stats uri /haproxy?stats
+  default_backend http_back
+
+backend http_back
+  balance roundrobin
+  server kube 172.42.42.101:80
+  server kube 172.42.42.102:80
+```
+Ahora habilitamos el HA proxy.
+```
+$ sudo systemctl enable haproxy.service
+$ sudo systemctl status haproxy.service
+$ sudo systemctl start haproxy.service
+$ sudo systemctl stop haproxy.service
+```
+
+## Creación de los recursos necesarios en K8s
+Las instrucciones están aquí: https://github.com/nginxinc/kubernetes-ingress/blob/master/docs/installation.md
+
+Ahora clonamos el siguiente repositorio git:
+```
+$ cd /tmp
+$ git clone git@github.com:nginxinc/kubernetes-ingress.git
+$ cd kubernetes-ingress/deployments/
+# Creamos el namespace y el service account.
+$ kubectl apply -f common/ns-and-sa.yaml
+# Se creará un nuevo namespace de nombre nginx-ingress
+# Todos los recursos que creemos se desplegarán en ese namespace: nginx-ingress
+```
+
+El siguiente paso es crear un secret con el certificado del servidor Nginx.
+```
+$ kubectl apply -f common/default-server-secret.yaml
+```
+El siguiente crear un config.
+```
+$ kubectl apply -f common/nginx-config.yaml
+```
+El siguiente crear un RBAC.
+```
+$ kubectl apply -f rbac/rbac.yaml
+```
+El siguiente crear un DaemonSet. De esta forma todos los kworkers tendrán un ingress controller.
+```
+$ kubectl apply -f daemon-set/nginx-ingress.yaml
+```
+Con esto hemos creado el **ingress controller** en los worker nodes.
+
+## Creación de deployment y de service para probar el ingress controller
+Lanzamos el siguiente deployment que lanzará un contenedor Nginx.
+```
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    run: nginx
+  name: nginx-deploy-main
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: nginx-main
+  template:
+    metadata:
+      labels:
+        run: nginx-main
+    spec:
+      containers:
+      - image: nginx
+        name: nginx
+```
+Creamos un yaml y lo ejecutamos con
+```
+$ kubectl create -f fich.yaml
+```
+Ya tenemos los pods, ahora necesitamos crear un `service` del tipo `ClusterIP`. Si no especificamos el tipo, por defecto se creará un `Cluster IP`.
+```
+$ kubectl expose deploy nginx-deploy-main --port 80
+```
+
+## Creación del Ingress Resource
+```
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: ingress-resource-1
+spec:
+  rules:
+  - host: nginx.example.com
+    http:
+      paths:
+      - backend:
+          serviceName: nginx-deploy-main
+          servicePort: 80
+```
+
+## Creación de entrada DNS para HA Proxy
+Creamos una entrada en /etc/hosts para `nginx.example.com`. En mi caso tengo HA Proxy corriendo en local, por tanto ...
+```
+127.0.0.1   nginx.example.com
+```

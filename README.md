@@ -841,3 +841,7 @@ spec:
     - name: host-volume
       mountPath: /mydata
 ```
+
+# Ingress controller
+En AWS, GCP o Azure, cuando creas un `service` del tipo Load Balancer, el provider automáticamente crea un punto de acceso a tus servicios. Pero en `bare metal` tenemos que preocuparnos del `Load Balancing`. Aquí es donde entra el juego el `ingress`.
+

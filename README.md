@@ -978,3 +978,119 @@ Creamos una entrada en /etc/hosts para `nginx.example.com`. En mi caso tengo HA 
 ```
 127.0.0.1   nginx.example.com
 ```
+
+## Creación de nuevo Deployment para nuevo ejemplo de ingress controller
+Creamos el siguiente deployment:
+```
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    run: nginx
+  name: nginx-deploy-blue
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: nginx-blue
+  template:
+    metadata:
+      labels:
+        run: nginx-blue
+    spec:
+      volumes:
+      - name: webdata
+        emptyDir: {}
+      initContainers:
+      - name: web-content
+        image: busybox
+        volumeMounts:
+        - name: webdata
+          mountPath: "/webdata"
+        command: ["/bin/sh", "-c", 'echo "<h1>I am <font color=blue>BLUE</font></h1>" > /webdata/index.html']
+      containers:
+      - image: nginx
+        name: nginx
+        volumeMounts:
+        - name: webdata
+          mountPath: "/usr/share/nginx/html"
+```
+Esto creará in container con una página html en color azul. Lo mismo con el siguiente deployment que creará una página en color verde.
+```
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    run: nginx
+  name: nginx-deploy-green
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      run: nginx-green
+  template:
+    metadata:
+      labels:
+        run: nginx-green
+    spec:
+      volumes:
+      - name: webdata
+        emptyDir: {}
+      initContainers:
+      - name: web-content
+        image: busybox
+        volumeMounts:
+        - name: webdata
+          mountPath: "/webdata"
+        command: ["/bin/sh", "-c", 'echo "<h1>I am <font color=green>GREEN</font></h1>" > /webdata/index.html']
+      containers:
+      - image: nginx
+        name: nginx
+        volumeMounts:
+        - name: webdata
+          mountPath: "/usr/share/nginx/html"
+```
+
+Ahora creamos un servicio para los nuevos deployments que hemos creado
+```
+$ kubectl expose deploy nginx-deploy-blue --port 80
+$ kubectl expose deploy nginx-deploy-green --port 80
+```
+
+Con esto tendremos tres servicios. Ahora tenemos que definir un `ingress resource`. Antes de crear este eliminamos el otro que habíamos creado con:
+```
+$ kubectl delete ingress ingress-resource-1
+```
+
+```
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: ingress-resource-2
+spec:
+  rules:
+  - host: nginx.example.com
+    http:
+      paths:
+      - backend:
+          serviceName: nginx-deploy-main
+          servicePort: 80
+  - host: blue.nginx.example.com
+    http:
+      paths:
+      - backend:
+          serviceName: nginx-deploy-blue
+          servicePort: 80
+  - host: green.nginx.example.com
+    http:
+      paths:
+      - backend:
+          serviceName: nginx-deploy-green
+          servicePort: 80
+```
+Ahora solo falta crear las entradas correspondientes en /etc/hosts para los servidores blue y green.
+```
+127.0.0.1       nginx.example.com
+127.0.0.1       blue.nginx.example.com
+127.0.0.1       green.nginx.example.com
+```

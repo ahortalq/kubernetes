@@ -1094,3 +1094,277 @@ Ahora solo falta crear las entradas correspondientes en /etc/hosts para los serv
 127.0.0.1       blue.nginx.example.com
 127.0.0.1       green.nginx.example.com
 ```
+
+# Instalación de Istio
+
+Istio se instala como sidecar junto a cada `service` que tengamos. Todas las peticiones que reciban nuestros `services` serán enviadas por el sidecar de istio, por tanto se sitúa como un frontend delante de nuestros `services`.
+
+## Arquitectura
+
+![arquitectura](img/Selección_002.png)
+
+### Proxy
+Se instala como sidecar junto a cada servicio.
+
+### Mixer
+Colecta métricas del proxy.
+
+### Pilot
+Es el que envía las configuraciones a los proxies. Cuando se definen las reglas/policies.
+
+### Galley
+Valida las configuraciones.
+
+### Citadel
+Se encarga de securizar las conexiones (TSL, ...)
+
+## Instalación
+
+Se necesita instalar `Helm` y `MetalLB`.
+
+### Helm
+
+#### Instalación de Helm
+Tenemos que crear el componente `Tiller` y darle permisos suficientes para que pueda desplegar recursos en los nodos. Crearemos una service account de nombre `tiller` y crearemos un ClusterRoleBinding del tipo cluster-admin.
+```
+$ sudo snap install helm --classic
+$ kubectl create serviceaccount tiller -n kube-system
+$ kubectl create clusterrolebinding tiller --clusterrole cluster-admin --serviceaccount=kube-system:tiller
+$ helm init --service-account tiller
+Creating /home/jcla/.helm 
+Creating /home/jcla/.helm/repository 
+Creating /home/jcla/.helm/repository/cache 
+Creating /home/jcla/.helm/repository/local 
+Creating /home/jcla/.helm/plugins 
+Creating /home/jcla/.helm/starters 
+Creating /home/jcla/.helm/cache/archive 
+Creating /home/jcla/.helm/repository/repositories.yaml 
+Adding stable repo with URL: https://kubernetes-charts.storage.googleapis.com 
+Adding local repo with URL: http://127.0.0.1:8879/charts 
+$HELM_HOME has been configured at /home/jcla/.helm.
+
+Tiller (the Helm server-side component) has been installed into your Kubernetes Cluster.
+```
+El último comando instalará `tiller` en el namespace `kube-system`.
+
+### MetalLB
+
+#### Instalación de MetalLB
+Si creamos un `service` de tipo LoadBalancer en un cluster local, no funcionará. El campo External-IP se quedará siempre en estado *pending*. Las instrucciones de instalación están aquí: https://metallb.universe.tf/installation/
+```
+$ kubectl apply -f https://raw.githubusercontent.com/google/metallb/v0.8.1/manifests/metallb.yaml
+namespace/metallb-system created
+podsecuritypolicy.policy/speaker created
+serviceaccount/controller created
+serviceaccount/speaker created
+clusterrole.rbac.authorization.k8s.io/metallb-system:controller created
+clusterrole.rbac.authorization.k8s.io/metallb-system:speaker created
+role.rbac.authorization.k8s.io/config-watcher created
+clusterrolebinding.rbac.authorization.k8s.io/metallb-system:controller created
+clusterrolebinding.rbac.authorization.k8s.io/metallb-system:speaker created
+rolebinding.rbac.authorization.k8s.io/config-watcher created
+daemonset.apps/speaker created
+deployment.apps/controller created
+```
+Desplegará varios recursos en el namespace `metallb-system`. Entre otros el **controller** y el **speaker**.
+
+* controller. Se encargará de la asignación de direcciones IP para el LoadBalancer.
+* speaker. Se encarga de asegurar que se puede acceder al servicio a través de la IP del LoadBalancer.
+
+Vemos que el **controller** se despliega como *deployment* y el **speaker** como *DaemonSet*.
+
+#### Configuración de MetalLB
+La configuración está documentada aquí: https://metallb.universe.tf/configuration/. La más sencilla es la `Layer 2 Configuration`. Se trata de crear un ConfigMap.
+```
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: metallb-system
+  name: config
+data:
+  config: |
+    address-pools:
+    - name: default
+      protocol: layer2
+      addresses:
+      - 172.42.42.220-172.42.42.250
+```
+En el campo `addresses` tenemos que indicar un rango de IPs del cluster.
+```
+$ kubectl get nodes -o wide
+NAME                   STATUS   ROLES    AGE     VERSION   INTERNAL-IP
+kmaster.example.com    Ready    master   5d19h   v1.15.3   172.42.42.100
+kworker1.example.com   Ready    <none>   5d18h   v1.15.3   172.42.42.101
+kworker2.example.com   Ready    <none>   5d18h   v1.15.3   172.42.42.102
+```
+
+#### Comprobación
+Desplegamos la aplicación tutorial.
+```
+$ kubectl run tutorial --image=lyhsoft/tutorial:1
+```
+Y ahora exponemos el servicio con el tipo `LoadBalancer`
+```
+$ kubectl expose deploy tutorial --port 80 --target-port 1234 --type LoadBalancer
+service/tutorial exposed
+```
+
+### Istio
+Descargamos el software:
+```
+$ cd /opt
+$ curl -L https://git.io/getLatestIstio | ISTIO_VERSION=1.3.0 sh -
+```
+Llevamos el programa `istioctl` al directorio `/usr/local/bin`.
+```
+$ cd /opt/istio-1.3.0
+$ sudo mv bin/istioctl /usr/local/bin/
+```
+Utilizaremos una aplicación que viene de ejemplo que se llama **bookinfo** que está dentro de la carpeta 'samples'.
+
+#### Verificamos la instalación
+```
+$ istioctl verify-install
+Checking the cluster to make sure it is ready for Istio installation...
+
+#1. Kubernetes-api
+-----------------------
+Can initialize the Kubernetes client.
+Can query the Kubernetes API Server.
+
+#2. Kubernetes-version
+-----------------------
+Istio is compatible with Kubernetes: v1.15.3.
+
+#3. Istio-existence
+-----------------------
+Istio will be installed in the istio-system namespace.
+
+#4. Kubernetes-setup
+-----------------------
+Can create necessary Kubernetes configurations: Namespace,ClusterRole,ClusterRoleBinding,CustomResourceDefinition,Role,ServiceAccount,Service,Deployments,ConfigMap. 
+
+#5. Sidecar-Injector
+-----------------------
+This Kubernetes cluster supports automatic sidecar injection. To enable automatic sidecar injection see https://istio.io/docs/setup/kubernetes/additional-setup/sidecar-injection/#deploying-an-app
+
+-----------------------
+Install Pre-Check passed! The cluster is ready for Istio installation.
+```
+
+#### Instalación de Istio usando charts de Helm
+```
+$ cd /opt/istio-1.3.0
+$ helm install install/kubernetes/helm/istio-init --name istio-init --namespace istio-system
+$ helm install install/kubernetes/helm/istio --name istio --namespace istio-system
+...
+Your release is named Istio.
+
+To get started running application with Istio, execute the following steps:
+1. Label namespace that application object will be deployed to by the following command (take default namespace as an example)
+
+$ kubectl label namespace default istio-injection=enabled
+$ kubectl get namespace -L istio-injection
+
+2. Deploy your applications
+
+$ kubectl apply -f <your-application>.yaml
+
+For more information on running Istio, visit:
+https://istio.io/
+```
+
+### Aplicación de ejemplo
+https://istio.io/docs/examples/bookinfo/
+
+Para que Istio pueda inyectar los sidecars a los pods, tenemos que etiquetar el namespace en el que están corriendo con `istio-injection=enabled`.
+
+Creamos un nuevo namespace y lo etiquetamos de la siguiente forma:
+```
+$ kubectl create ns ns-book-info-dev
+$ kubectl label namespace ns-book-info-dev istio-injection=enabled
+$ kubectl describe ns ns-book-info-dev
+Name:         ns-book-info-dev
+Labels:       istio-injection=enabled
+Annotations:  <none>
+Status:       Active
+
+No resource quota.
+
+No resource limits.
+```
+Ahora creamos la aplicación:
+```
+$ kubectl create -f /opt/istio-1.3.0/samples/bookinfo/platform/kube/bookinfo.yaml
+```
+Verificamos que accedemos a ella desde cualquier pod.
+```
+$ kubectl exec -it $(kubectl get pod -n ns-book-info-dev -l app=ratings -o jsonpath='{.items[0].metadata.name}') -n ns-book-info-dev -c ratings -- curl productpage:9080/productpage | grep -o "<title>.*</title>"
+<title>Simple Bookstore App</title>
+```
+Y la hacemos accesible desde el exterior. Pero ya sabemos cómo acceder porque tenemos creado un ingress de tipo LoadBalancer para Istio.
+```
+$ kubectl get svc -n istio-system | grep LoadBalancer
+istio-ingressgateway     LoadBalancer   10.96.166.143    172.42.42.220
+```
+La IP externa es 172.42.42.220 (la obtenemos por tener MetalLB instalado en nuestro cluster). Ahora, para acceder a mi aplicación necesito crear un `Gateway`.
+```
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: bookinfo-gateway
+spec:
+  selector:
+    istio: ingressgateway # use istio default controller
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: bookinfo
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - bookinfo-gateway
+  http:
+  - match:
+    - uri:
+        exact: /productpage
+    - uri:
+        prefix: /static
+    - uri:
+        exact: /login
+    - uri:
+        exact: /logout
+    - uri:
+        prefix: /api/v1/products
+    route:
+    - destination:
+        host: productpage
+        port:
+          number: 9080
+```
+Ejecutamos el siguiente comando para crear este Gateway.
+```
+$ kubectl create -f /opt/istio-1.3.0/samples/bookinfo/networking/bookinfo-gateway.yaml -n ns-book-info-dev
+```
+Comprobamos los recursos creados con
+```
+$ kubectl get gateway -o wide -n ns-book-info-dev
+NAME               AGE
+bookinfo-gateway   95s
+$ kubectl get virtualservice -o wide -n ns-book-info-dev
+NAME       GATEWAYS             HOSTS   AGE
+bookinfo   [bookinfo-gateway]   [*]     113s
+```
+La app está accesible en la siguiente URL (utilizamos la external-ip).
+
+http://172.42.42.220/productpage
+

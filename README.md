@@ -1130,20 +1130,25 @@ Tenemos que crear el componente `Tiller` y darle permisos suficientes para que p
 $ sudo snap install helm --classic
 $ kubectl create serviceaccount tiller -n kube-system
 $ kubectl create clusterrolebinding tiller --clusterrole cluster-admin --serviceaccount=kube-system:tiller
-$ helm init --service-account tiller
-Creating /home/jcla/.helm 
-Creating /home/jcla/.helm/repository 
-Creating /home/jcla/.helm/repository/cache 
-Creating /home/jcla/.helm/repository/local 
-Creating /home/jcla/.helm/plugins 
-Creating /home/jcla/.helm/starters 
-Creating /home/jcla/.helm/cache/archive 
-Creating /home/jcla/.helm/repository/repositories.yaml 
-Adding stable repo with URL: https://kubernetes-charts.storage.googleapis.com 
-Adding local repo with URL: http://127.0.0.1:8879/charts 
-$HELM_HOME has been configured at /home/jcla/.helm.
-
-Tiller (the Helm server-side component) has been installed into your Kubernetes Cluster.
+```
+Hay un problema con las últimas versiones de helm y tiller. Antes se podía hacer lo siguiente ... `helm init --service-account tiller`. Y tenemos que hacerlo de todas formas para crear los directorios locales en ~/.helm. Pero ahora es necesario hacer lo siguiente
+```
+$ cd /tmp
+$ helm init --service-account tiller --output yaml > tiller.yaml
+```
+Ahora hay que editar el fichero tiller.yaml y cambiar el apiVersion por `apiVersion: apps/v1` e incluir el selector siguiente
+```
+spec:
+  replicas: 1
+  strategy: {}
+  selector:
+    matchLabels:
+      app: helm
+      name: tiller
+```
+Luego aplicar el tiller.yaml
+```
+$ kubectl create -f tiller.yaml
 ```
 El último comando instalará `tiller` en el namespace `kube-system`.
 

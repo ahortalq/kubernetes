@@ -1152,6 +1152,8 @@ $ kubectl create -f tiller.yaml
 ```
 El último comando instalará `tiller` en el namespace `kube-system`.
 
+En caso de duda, echar un vistazo a la página https://github.com/helm/helm/issues/6374
+
 ### MetalLB
 
 #### Instalación de MetalLB
@@ -1261,7 +1263,46 @@ Install Pre-Check passed! The cluster is ready for Istio installation.
 ```
 $ cd /opt/istio-1.3.0
 $ helm install install/kubernetes/helm/istio-init --name istio-init --namespace istio-system
-$ helm install install/kubernetes/helm/istio --name istio --namespace istio-system
+```
+Primero definimos variables de entorno para crear un secret (para la instalación de Kiali).
+```
+$ KIALI_USERNAME=$(read -p 'Kiali Username: ' uval && echo -n $uval | base64)
+$ KIALI_PASSPHRASE=$(read -sp 'Kiali Passphrase: ' pval && echo -n $pval | base64)
+$ NAMESPACE=istio-system
+```
+Y ejecutamos el siguiente comando.
+```
+$ cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kiali
+  namespace: $NAMESPACE
+  labels:
+    app: kiali
+type: Opaque
+data:
+  username: $KIALI_USERNAME
+  passphrase: $KIALI_PASSPHRASE
+EOF
+```
+Podemos verificar que se ha creado correctamente con ...
+```
+$ kubectl describe secret kiali -n istio-system
+Name:         kiali
+Namespace:    istio-system
+Labels:       app=kiali
+Annotations:  
+Type:         Opaque
+
+Data
+====
+passphrase:  8 bytes
+username:    5 bytes
+```
+Ahora instalamos Istio.
+```
+$ helm install install/kubernetes/helm/istio --name istio --namespace istio-system --set kiali.dashboard.grafanaURL=http://grafana:3000 --set grafana.enabled=True --set kiali.enabled=True
 ...
 Your release is named Istio.
 

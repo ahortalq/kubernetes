@@ -1274,6 +1274,12 @@ For more information on running Istio, visit:
 https://istio.io/
 ```
 
+#### Desinstalación
+```
+$ helm delete --purge istio
+$ helm delete --purge istio-init
+```
+
 ### Aplicación de ejemplo
 https://istio.io/docs/examples/bookinfo/
 
@@ -1295,7 +1301,7 @@ No resource limits.
 ```
 Ahora creamos la aplicación:
 ```
-$ kubectl create -f /opt/istio-1.3.0/samples/bookinfo/platform/kube/bookinfo.yaml
+$ kubectl create -f /opt/istio-1.3.0/samples/bookinfo/platform/kube/bookinfo.yaml -n ns-book-info-dev
 ```
 Verificamos que accedemos a ella desde cualquier pod.
 ```
@@ -1368,3 +1374,79 @@ La app está accesible en la siguiente URL (utilizamos la external-ip).
 
 http://172.42.42.220/productpage
 
+### Kiali
+
+#### Variables de entorno
+
+Definimos variables de entorno para crear un secret.
+```
+$ KIALI_USERNAME=$(read -p 'Kiali Username: ' uval && echo -n $uval | base64)
+$ KIALI_PASSPHRASE=$(read -sp 'Kiali Passphrase: ' pval && echo -n $pval | base64)
+$ NAMESPACE=istio-system
+```
+Y ejecutamos el siguiente comando.
+```
+$ cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kiali
+  namespace: $NAMESPACE
+  labels:
+    app: kiali
+type: Opaque
+data:
+  username: $KIALI_USERNAME
+  passphrase: $KIALI_PASSPHRASE
+EOF
+```
+Podemos verificar que se ha creado correctamente con ...
+```
+$ kubectl describe secret kiali -n istio-system
+Name:         kiali
+Namespace:    istio-system
+Labels:       app=kiali
+Annotations:  
+Type:         Opaque
+
+Data
+====
+passphrase:  8 bytes
+username:    5 bytes
+```
+
+#### Reinstalación de Istio con el add-on de Kiali y Grafana habilitados
+```
+$ cd /opt/istio-1.3.0
+$ helm install install/kubernetes/helm/istio --name istio --namespace istio-system --set grafana.enabled=True --set kiali.enabled=True
+```
+
+#### Reinstalación de la aplicación book-info
+```
+$ kubectl create -f /opt/istio-1.3.0/samples/bookinfo/platform/kube/bookinfo.yaml -n ns-book-info-dev
+# Este segundo yaml no se ejecutó en la primera instalación
+$ kubectl create -f /opt/istio-1.3.0/samples/bookinfo/networking/destination-rule-all.yaml -n ns-book-info-dev
+```
+
+#### Acceso a Kiali
+Antes vamos a generar algo de tráfico. Se enviará una petición cada 2 segundos.
+```
+$ watch curl -s -o /dev/null http://172.42.42.220/productpage
+```
+Vemos que Kiali sólo es accesible desde dentro del cluster
+```
+$ kubectl get svc kiali -n istio-system
+NAME    TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)     AGE
+kiali   ClusterIP   10.110.201.92   <none>        20001/TCP   16m
+```
+
+Tenemos dos opciones: O editamos el servicio y cambiamos el tipo de ClusterIP a NodePort con la orden
+```
+$ kubectl edit svc kiali -n istio-system
+```
+o bien hacemos un port-forwarding de la siguiente forma
+```
+$ kubectl port-forward kiali-pod-52233566 20001:20001 -n istio-system
+```
+
+#### Istio Request Routing

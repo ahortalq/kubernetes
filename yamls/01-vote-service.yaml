@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vote-service
+spec:
+  type: ClusterIP
+  selector:
+    run: vote
+  ports:
+    - name: http
+      port: 80

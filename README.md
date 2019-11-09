@@ -1320,6 +1320,26 @@ For more information on running Istio, visit:
 https://istio.io/
 ```
 
+#### Instalación de Istio egress gateway (NO ES NECESARIO)
+
+Primero verificamos si lo tenemos desplegado con el siguiente comando
+```
+$ kubectl get pod -l istio=egressgateway -n istio-system
+```
+Si no aparece ningún recurso, tenemos que instalarlo con:
+```
+$ helm template install/kubernetes/helm/istio --name istio-egressgateway --namespace istio-system \
+    -x charts/gateways/templates/deployment.yaml -x charts/gateways/templates/service.yaml \
+    -x charts/gateways/templates/serviceaccount.yaml -x charts/gateways/templates/autoscale.yaml \
+    -x charts/gateways/templates/role.yaml -x charts/gateways/templates/rolebindings.yaml \
+    --set global.istioNamespace=istio-system --set gateways.istio-ingressgateway.enabled=false \
+    --set gateways.istio-egressgateway.enabled=true | kubectl apply -f -
+```
+Tenemos que habilitar también el logging para Envoy con:
+```
+$ helm template install/kubernetes/helm/istio --namespace=istio-system -x templates/configmap.yaml --set global.proxy.accessLogFile="/dev/stdout" | kubectl replace -f -
+```
+
 #### Desinstalación
 ```
 $ helm delete --purge istio
@@ -1496,3 +1516,45 @@ $ kubectl port-forward kiali-pod-52233566 20001:20001 -n istio-system
 ```
 
 #### Istio Request Routing
+
+
+
+# Preparación para despliegue con XLR y XLD
+
+## Docker registry privado para el cluster K8S
+
+Tenemos que incluir un registro en `/etc/hosts` en las máquinas kmaster, kworker1 y kworker2. Se podría automatizar con las siguientes líneas ...
+
+```
+$ cd ~/Projects/kubernetes/vagrant-provisioning
+$ for host in kmaster kworker1 kworker2; do ssh -o "StrictHostKeyChecking=no" -p $(vagrant port ${host} --guest 22) root@localhost 'echo "10.0.2.2 lyhsoft-registry" >> /etc/hosts'; done
+ ```
+
+También tenemos que crear en las tres máquinas el fichero /etc/docker/daemon.json con el siguiente contenido:
+
+```
+{
+  "insecure-registries": [
+    "lyhsoft-registry:8084"
+  ]
+}
+```
+
+Y reiniciar servicios.
+
+En `Nexus` tenemos que habilitar la opción **Allow anonymous docker pull ( Docker Bearer Token Realm required )** y activar la correspondiente opción bajo **Security -> Realms**.
+
+Con esto ya podremos descargar imágenes desde el repositorio privado en el cluster K8S.
+
+## Preparación de yamls para crear nuevas versiones
+
+Atención, vamos a necesitar crear deployments que se llamen de forma distinta porque necesitamos dos versiones distintas de los microservicios corriendo a la vez.
+
+Ya la tenemos en XLD
+
+## Modificación de los namespaces para que sean gestionados por Istio
+
+```
+$ kubectl label namespace ns-voting-app-dev istio-injection=enabled
+$ kubectl describe ns ns-voting-app-dev
+```

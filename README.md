@@ -1558,3 +1558,23 @@ Ya la tenemos en XLD
 $ kubectl label namespace ns-voting-app-dev istio-injection=enabled
 $ kubectl describe ns ns-voting-app-dev
 ```
+
+# Persistent Volume con NFS
+sudo apt install nfs-server
+sudo systemctl enable nfs-server
+sudo service nfs-server start
+sudo mkdir -p /srv/nfs/kubedata
+sudo chmod -R 777 /srv/nfs
+sudo vi /etc/exports    y añadimos  la línea con el contenido siguiente:    /srv/nfs/kubedata   *(rw,sync,no_subtree_check,insecure)
+sudo exportfs -rav
+sudo exportfs -v
+showmount -e
+
+TEST
+Veamos si se puede montar el directorio desde los nodos
+ssh root@kworker1    password = kubeadmin
+ping 10.0.2.2
+showmount -e 10.0.2.2
+mount -t nfs 10.0.2.2:/srv/nfs/kubedata /mnt
+mount | grep kubedata
+umount /mnt
